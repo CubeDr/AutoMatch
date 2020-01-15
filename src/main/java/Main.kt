@@ -1,71 +1,94 @@
-import automatch.Game
-import automatch.GameRow
 import automatch.Player
 import automatch.getPlayerListFromFile
 
-fun generateValidGames(players: List<Player>): List<Game> {
-    val validGames = mutableListOf<Game>()
+const val DUPLICATE_SCORE = 1000
 
-    players.forEachIndexed { p1Idx, p1 ->
-        players.forEachIndexedFrom(p1Idx + 1) { p2Idx, p2 ->
-            players.forEachIndexedFrom(p2Idx + 1) { p3Idx, p3 ->
-                players.forEachIndexedFrom(p3Idx + 1) { _, p4 ->
-                    val g = Game(p1, p2, p3, p4)
-                    if(g.isValid) validGames += g
+fun gameScore(players: List<Player>): Int {
+    // invalid game
+    if(players.hasDuplicate()) return DUPLICATE_SCORE
+    // game balance
+    val balance = (players.maxBy { it.skill }!!).skill - (players.minBy { it.skill }!!).skill
+
+    return balance
+}
+
+fun score(list: List<Player>, courts: Int): Int {
+    var score = 0
+
+    list.chunked(4 * courts) { row ->
+        if(row.hasDuplicate()) score += DUPLICATE_SCORE
+        row.chunked(4) { g ->
+            if(g.size == 4) {
+                score += gameScore(g)
+            } else if(g.hasDuplicate()) // 같은 사람이 중복으로 제외된 경우
+                score += DUPLICATE_SCORE
+        }
+        Unit
+    }
+
+    return score
+}
+
+fun step(match: MutableList<Player>, courts: Int) {
+    val nextStep = match.toMutableList()
+    var nextStepScore = score(nextStep, courts)
+
+    for(p1Idx in 0 until match.size - 1) {
+        for(p2Idx in (p1Idx + 1) until match.size) {
+            val swapped = List(match.size) {
+                when (it) {
+                    p1Idx -> match[p2Idx]
+                    p2Idx -> match[p1Idx]
+                    else -> match[it]
                 }
+            }
+            val swappedScore = score(swapped, courts)
+
+            if(swappedScore < nextStepScore) {
+                nextStep.clear()
+                nextStep.addAll(swapped)
+                nextStepScore = swappedScore
             }
         }
     }
 
-    return validGames
+    match.clear()
+    match.addAll(nextStep)
 }
 
-fun dfsRow(games: List<Game>, courts: Int, result: MutableList<GameRow>, cur: MutableList<Game> = mutableListOf(), idx: Int = 0) {
-    if(cur.size == courts) {
-        val row = GameRow(cur)
-        if(row.isValid) {
-            result += row
-            println(result.size)
-        }
-        return
-    }
+fun optimize(players: List<Player>, courts: Int, times: Int): List<Player> {
+    val matches = mutableListOf<Player>().apply {
+        repeat(4 * courts * times / players.size) { addAll(players) }
+    }.shuffled().toMutableList()
 
-    games.forEachIndexedFrom(idx) { index, game ->
-        val collide = cur.fold(false) { a, g -> a || g.collideWith(game) }
-        if(!collide) {
-            cur.add(game)
-            dfsRow(games, courts, result, cur, index + 1)
-            cur.removeAt(cur.lastIndex)
-        }
-    }
-}
+    var originalScore: Int
+    do {
+        originalScore = score(matches, courts)
+        step(matches, courts)
+    } while (originalScore != score(matches, courts))
 
-fun generateValidRows(games: List<Game>, courts: Int): List<GameRow> {
-    val validRows = mutableListOf<GameRow>()
-
-    dfsRow(games, courts, validRows)
-
-    return validRows
+    return matches
 }
 
 fun main(args: Array<String>) {
     val players = getPlayerListFromFile("players.csv")
+    val courts = 3
+    val times = 2
 
-    val courts = 6
-    val times = 12
+    repeat(5) {
+        val matches = optimize(players, courts, times)
 
-    // 적당한 수의 게임만 남김
-    val validGames = generateValidGames(players)
-            .sortedByDescending { it.score }
-            .subList(0, courts * courts * times * times)
-
-    val validRows = generateValidRows(validGames, 6)
-    validRows.forEach { println(it) }
-
-}
-
-fun<T> List<T>.forEachIndexedFrom(index: Int, action: (index: Int, item: T) -> Unit) {
-    forEachIndexed { i, t ->
-        if(i >= index) action.invoke(i, t)
+        matches.chunked(courts * 4) { row ->
+            row.chunked(4) { g ->
+                if(g.size >= 4) {
+                    g.forEach { print(it.name + " ") }
+                    print("\t|\t")
+                }
+            }
+            println()
+        }
+        println()
     }
 }
+
+fun<T> List<T>.hasDuplicate() = toSet().size != size
